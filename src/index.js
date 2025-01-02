@@ -103,7 +103,7 @@ const run = async () => {
                     owner,
                     repo,
                     issue_number: issue.number,
-                    body: `Hello @${assigneeLogin}! You've been assigned to [${repository}](https://github.com/${repository}/issues/${issue.number}). You have 24 hours to complete a pull request. To place a bid and potentially earn some BCH, type /bid [amount in BCH] [BCH address].`
+                    body: `Hello @${assigneeLogin}! You've been assigned to [${repository} issue #${issue.number}](https://github.com/${repository}/issues/${issue.number}). You have 24 hours to complete a pull request.`
                 });
             }
         }
@@ -112,7 +112,6 @@ const run = async () => {
 
         let last_event = { issue: { number: "" } };
         let present_date = new Date();
-        const processedActions = new Set();
 
         await octokit.paginate(octokit.issues.listEventsForRepo, {
             owner,
@@ -128,56 +127,50 @@ const run = async () => {
 
                     if (last_event.issue.number != event.issue.number) {
 
-                        const actionId = `${event.issue.number}-${event.assignee.login}`;
-                        if (!processedActions.has(actionId)) {
-                            console.log(
-                                event.issue.updated_at + " " +
-                                event.issue.number + " " +
-                                event.assignee.login + " " +
-                                event.issue.assignee.login + " " +
-                                event.issue.state + " " +
-                                (Difference_In_Time / (1000 * 3600 * 24)).toString() + " days",
-                            );
+                        console.log(
+                            event.issue.updated_at + " " +
+                            event.issue.number + " " +
+                            event.assignee.login + " " +
+                            event.issue.assignee.login + " " +
+                            event.issue.state + " " +
+                            (Difference_In_Time / (1000 * 3600 * 24)).toString() + " days",
+                        );
 
-                            processedActions.add(actionId);
+                        if ((Difference_In_Time / (1000 * 3600 * 24)) > 1) {
+                            // Check if the issue has any labels
+                            const issueDetails = await octokit.issues.get({
+                                owner,
+                                repo,
+                                issue_number: event.issue.number
+                            });
 
-                            if ((Difference_In_Time / (1000 * 3600 * 24)) > 1) {
-                                // Check if the issue has any labels
-                                const issueDetails = await octokit.issues.get({
+                            const query = `type:pr state:open repo:${owner}/${repo} author:${event.issue.assignee.login} ${event.issue.number} in:body`;
+                            const searchResult = await octokit.search.issuesAndPullRequests({
+                                q: query
+                            });
+
+                            if (searchResult.data.total_count > 0) {
+                                console.log(`Issue #${event.issue.number} has an open PR by ${event.issue.assignee.login}, skipping unassign.`);
+                            } else if (issueDetails.data.labels.length === 0) {  
+                                console.log('unassigning ' + event.issue.assignee.login + " from " + event.issue.number);
+
+                                await octokit.issues.removeAssignees({
                                     owner,
                                     repo,
-                                    issue_number: event.issue.number
+                                    issue_number: event.issue.number,
+                                    assignees: [event.issue.assignee.login],
                                 });
 
-                                // Check if there's an open PR from the assigned user referencing the issue
-                                const query = `type:pr state:open repo:${owner}/${repo} author:${event.issue.assignee.login} ${event.issue.number} in:body`;
-                                const searchResult = await octokit.search.issuesAndPullRequests({
-                                    q: query
+                                // Add a comment about unassignment
+                                await octokit.issues.createComment({
+                                    owner,
+                                    repo,
+                                    issue_number: event.issue.number,
+                                    body: `⏰ This issue has been automatically unassigned due to 24 hours of inactivity. 
+                                    The issue is now available for anyone to work on again.`
                                 });
-
-                                if (searchResult.data.total_count > 0) {
-                                    console.log(`Issue #${event.issue.number} has an open PR by ${event.issue.assignee.login}, skipping unassign.`);
-                                } else if (issueDetails.data.labels.length === 0) {
-                                    console.log('unassigning ' + event.issue.assignee.login + " from " + event.issue.number);
-
-                                    await octokit.issues.removeAssignees({
-                                        owner,
-                                        repo,
-                                        issue_number: event.issue.number,
-                                        assignees: [event.issue.assignee.login],
-                                    });
-
-                                    // Add a comment about unassignment
-                                    await octokit.issues.createComment({
-                                        owner,
-                                        repo,
-                                        issue_number: event.issue.number,
-                                        body: `⏰ This issue has been automatically unassigned due to 24 hours of inactivity. 
-                                        The issue is now available for anyone to work on again.`
-                                    });
-                                } else {
-                                    console.log(`Issue #${event.issue.number} has labels, skipping unassign.`);
-                                }
+                            } else {
+                                console.log(`Issue #${event.issue.number} has labels, skipping unassign.`);
                             }
                         }
                     }
